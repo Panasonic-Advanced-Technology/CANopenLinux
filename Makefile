@@ -3,7 +3,7 @@
 
 DRV_SRC = .
 CANOPEN_SRC = CANopenNode
-APPL_SRC = CANopenNode/example
+APPL_SRC = application
 
 
 LINK_TARGET = canopend
@@ -41,22 +41,28 @@ SOURCES = \
 	$(CANOPEN_SRC)/extra/CO_trace.c \
 	$(CANOPEN_SRC)/CANopen.c \
 	$(APPL_SRC)/OD.c \
-	$(DRV_SRC)/CO_main_basic.c
+	$(APPL_SRC)/OD_2nd.c \
+	$(DRV_SRC)/CO_main_basic.c \
+	$(DRV_SRC)/CO_application.c
 
 
 OBJS = $(SOURCES:%.c=%.o)
 CC ?= gcc
 OPT =
-OPT += -g
+OPT += -g -ggdb
 #OPT += -O2
-OPT += -DCO_SINGLE_THREAD
+OPT += -DCO_SINGLE_THREAD=1
 #OPT += -DCO_CONFIG_DEBUG=0xFFFF
 #OPT += -Wextra -Wshadow -pedantic -fanalyzer
 #OPT += -DCO_USE_GLOBALS
-#OPT += -DCO_MULTIPLE_OD
+OPT += -DCO_MULTIPLE_OD
+OPT += -DCO_USE_APPLICATION=1
+OPT += -DCO_CONFIG_HB_CONS=0
+OPT += -DCO_CONFIG_STORAGE=0
+OPT += -Wno-format
 CFLAGS = -Wall $(OPT) $(INCLUDE_DIRS)
 LDFLAGS =
-LDFLAGS += -g
+LDFLAGS += -g -ggdb
 #LDFLAGS += -pthread
 
 #Options can be also passed via make: 'make OPT="-g" LDFLAGS="-pthread"'

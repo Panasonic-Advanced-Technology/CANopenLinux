@@ -39,6 +39,7 @@
 
 #include "CANopen.h"
 #include "OD.h"
+#include "OD_2nd.h"
 #include "CO_error.h"
 #include "CO_epoll_interface.h"
 #include "CO_storageLinux.h"
@@ -105,6 +106,7 @@
 
 /* CANopen object */
 CO_t *CO = NULL;
+CO_t *CO_2nd = NULL;
 
 /* Active node-id, copied from pendingNodeId in the communication reset */
 static uint8_t CO_activeNodeId = CO_LSS_NODE_ID_ASSIGNMENT;
@@ -464,6 +466,19 @@ int main (int argc, char *argv[]) {
                    "CO_new(), heapMemoryUsed=", heapMemoryUsed);
         exit(EXIT_FAILURE);
     }
+#if 1
+    uint32_t heapMemoryUsed_2nd = 0;
+    CO_config_t *config_2nd_ptr = NULL;
+    CO_config_t co_2nd_config = {0};
+    OD_2nd_INIT_CONFIG(co_2nd_config); /* helper macro from OD.h */
+    config_2nd_ptr = &co_2nd_config;
+    CO_2nd = CO_new(config_2nd_ptr, &heapMemoryUsed);
+    if (CO_2nd == NULL) {
+        log_printf(LOG_CRIT, DBG_GENERAL,
+                   "CO_new(), heapMemoryUsed=", heapMemoryUsed_2nd);
+        exit(EXIT_FAILURE);
+    }
+#endif
 
 
 #if (CO_CONFIG_STORAGE) & CO_CONFIG_STORAGE_ENABLE
@@ -571,12 +586,20 @@ int main (int argc, char *argv[]) {
         /* Enter CAN configuration. */
         CO_CANsetConfigurationMode((void *)&CANptr);
         CO_CANmodule_disable(CO->CANmodule);
+        CO_CANmodule_disable(CO_2nd->CANmodule);
 
 
         /* initialize CANopen */
         err = CO_CANinit(CO, (void *)&CANptr, 0 /* bit rate not used */);
         if(err != CO_ERROR_NO) {
             log_printf(LOG_CRIT, DBG_CAN_OPEN, "CO_CANinit()", err);
+            programExit = EXIT_FAILURE;
+            CO_endProgram = 1;
+            continue;
+        }
+        err = CO_CANinit(CO_2nd, (void *)&CANptr, 0 /* bit rate not used */);
+        if(err != CO_ERROR_NO) {
+            log_printf(LOG_CRIT, DBG_CAN_OPEN, "CO_CANinit() 2nd", err);
             programExit = EXIT_FAILURE;
             CO_endProgram = 1;
             continue;
@@ -611,6 +634,29 @@ int main (int argc, char *argv[]) {
                              SDO_CLI_TIMEOUT_TIME, /* SDOclientTimeoutTime_ms */
                              SDO_CLI_BLOCK,     /* SDOclientBlockTransfer */
                              CO_activeNodeId,
+                             &errInfo);
+        if(err != CO_ERROR_NO && err != CO_ERROR_NODE_ID_UNCONFIGURED_LSS) {
+            if (err == CO_ERROR_OD_PARAMETERS) {
+                log_printf(LOG_CRIT, DBG_OD_ENTRY, errInfo);
+            }
+            else {
+                log_printf(LOG_CRIT, DBG_CAN_OPEN, "CO_CANopenInit()", err);
+            }
+            programExit = EXIT_FAILURE;
+            CO_endProgram = 1;
+            continue;
+        }
+        err = CO_CANopenInit(CO_2nd,                /* CANopen object */
+                             CO->NMT,              /* alternate NMT */
+                             CO->em,              /* alternate em */
+                             OD_2nd,                /* Object dictionary */
+                             OD_STATUS_BITS,    /* Optional OD_statusBits */
+                             NMT_CONTROL,       /* CO_NMT_control_t */
+                             FIRST_HB_TIME,     /* firstHBTime_ms */
+                             SDO_SRV_TIMEOUT_TIME, /* SDOserverTimeoutTime_ms */
+                             SDO_CLI_TIMEOUT_TIME, /* SDOclientTimeoutTime_ms */
+                             SDO_CLI_BLOCK,     /* SDOclientBlockTransfer */
+                             CO_activeNodeId+1,
                              &errInfo);
         if(err != CO_ERROR_NO && err != CO_ERROR_NODE_ID_UNCONFIGURED_LSS) {
             if (err == CO_ERROR_OD_PARAMETERS) {
@@ -718,10 +764,28 @@ int main (int argc, char *argv[]) {
             CO_endProgram = 1;
             continue;
         }
+        errInfo = 0;
+        err = CO_CANopenInitPDO(CO_2nd,             /* CANopen object */
+                                CO->em,             /* emergency object */
+                                OD_2nd,             /* Object dictionary */
+                                CO_activeNodeId,
+                                &errInfo);
+        if(err != CO_ERROR_NO && err != CO_ERROR_NODE_ID_UNCONFIGURED_LSS) {
+            if (err == CO_ERROR_OD_PARAMETERS) {
+                log_printf(LOG_CRIT, DBG_OD_ENTRY, errInfo);
+            }
+            else {
+                log_printf(LOG_CRIT, DBG_CAN_OPEN, "CO_CANopenInitPDO()", err);
+            }
+            programExit = EXIT_FAILURE;
+            CO_endProgram = 1;
+            continue;
+        }
 
 
         /* start CAN */
         CO_CANsetNormalMode(CO->CANmodule);
+        CO_CANsetNormalMode(CO_2nd->CANmodule);
 
         reset = CO_RESET_NOT;
 
@@ -733,11 +797,13 @@ int main (int argc, char *argv[]) {
             CO_epoll_wait(&epMain);
 #ifdef CO_SINGLE_THREAD
             CO_epoll_processRT(&epMain, CO, false);
+            CO_epoll_processRT(&epMain, CO_2nd, false);
 #endif
 #if (CO_CONFIG_GTW) & CO_CONFIG_GTW_ASCII
             CO_epoll_processGtw(&epGtw, CO, &epMain);
 #endif
             CO_epoll_processMain(&epMain, CO, GATEWAY_ENABLE, &reset);
+//            CO_epoll_processMain(&epMain, CO_2nd, GATEWAY_ENABLE, &reset);
             CO_epoll_processLast(&epMain);
 
 #ifdef CO_USE_APPLICATION
